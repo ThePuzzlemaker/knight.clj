@@ -8,7 +8,7 @@
              Quit Not Length Dump Output Ascii
              Value UnaryMinus Use Add Sub Mul
              Div Rem Pow Lt Gt Eq And Or
-             Semi Assign While]
+             Semi Assign While If Get Substitute]
             [knight.data KnBlock KnString
              KnNumber KnBoolean KnNull KnIdent]))
 
@@ -177,6 +177,24 @@
               (do (while (.inner (data/to-boolean (kn-eval test ctx)))
                     (kn-eval expr ctx))
                   (data/->KnNull)))
+
+(kn-create-fn If [[test :boolean] [iftrue :unevaluated] [iffalse :unevaluated]] [this ctx]
+              (kn-eval (if (.inner test) iftrue iffalse) ctx))
+(kn-create-fn Get [[string :string] [start :number] [length :number]] [this ctx]
+              (data/->KnString (subs (.inner string)
+                                     (.inner start)
+                                     (+ (.inner start)
+                                        (.inner length)))))
+
+(kn-create-fn Substitute [[string :string] [start :number]
+                          [length :number] [newstr :string]] [this ctx]
+              (let [string (.inner string)
+                    start (.inner start)
+                    length (.inner length)
+                    end (+ start length)
+                    newstr (.inner newstr)]
+                (data/->KnString (str (subs string 0 start)
+                                      newstr (subs string end)))))
 
 (extend-protocol Evalable
   KnNull (kn-eval-step [this, _] this)

@@ -43,3 +43,8 @@
 (deftype Semi [e1, e2] Expr)
 (deftype Assign [ident, expr] Expr)
 (deftype While [test, expr] Expr)
+
+(deftype If [test, iftrue, iffalse] Expr)
+(deftype Get [string, start, length] Expr)
+
+(deftype Substitute [string, start, length, newstr] Expr)
