@@ -13,4 +13,4 @@ pom.xml.asc
 .hg/
 /.calva
 /.lsp
-/.clj-kondo
+/.clj-kondo/.cache
