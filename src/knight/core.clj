@@ -1,9 +1,7 @@
 (ns knight.core
   (:require [clojure.tools.cli :refer [parse-opts]]
             [clojure.string :as string]
-            [knight.lexer :as lexer]
-            [knight.eval :as eval]
-            [knight.ast :as ast])
+            [knight.eval :as eval])
   (:gen-class))
 
 (def cli-options
@@ -38,19 +36,16 @@
       {:exit-message "error: one of `--expr` or `--file` must be specified"}
       :else {:options options :ok? true})))
 
-(defn run [contents]
-  (let [lex (atom (lexer/tokens contents))]
-    (println (lexer/advance lex))))
-
 (defn real-main [options]
   (cond
     (:expr options)
-    (run (:expr options))
+    (eval/run (:expr options))
     (:file options)
-    (run (slurp (:file options)))))
+    (eval/run (slurp (:file options)))))
 
 (defn -main [& args]
   (let [{:keys [options exit-message ok?]} (validate-args args)]
     (if exit-message
       (exit (if ok? 0 1) exit-message)
-      (real-main options))))
+      (do (real-main options)
+          (System/exit 0)))))

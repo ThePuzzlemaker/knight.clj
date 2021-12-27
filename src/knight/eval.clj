@@ -2,24 +2,29 @@
   (:require [clojure.string :as string]
             [clojure.java.shell :refer [sh]]
             [knight.data :as data]
-            [knight.ast :as ast])
+            [knight.ast :as ast]
+            [knight.parser :as parser]
+            [knight.lexer :as lexer])
   (:import  [knight.ast Prompt Rand Nop
              Block Eval Call Shell
              Quit Not Length Dump Output Ascii
              Value UnaryMinus Use Add Sub Mul
              Div Rem Pow Lt Gt Eq And Or
-             Semi Assign While If Get Substitute]
+             Semi Assign While If Get Substitute GenSym]
             [knight.data KnBlock KnString
-             KnNumber KnBoolean KnNull KnIdent]))
+             KnNumber KnBoolean KnNull KnIdent]
+            [java.util.concurrent ThreadLocalRandom]))
 
 (defprotocol Context
   (ctx-put [this, key, value])
-  (ctx-get [this, key]))
+  (ctx-get [this, key])
+  (ctx-contains [this, key]))
 
 (deftype MapContext [map]
   Context
   (ctx-put [_, key, value] (swap! map #(assoc % key value)))
-  (ctx-get [_, key] (get @map key)))
+  (ctx-get [_, key] (get @map key))
+  (ctx-contains [_, key] (contains? @map key)))
 
 (defn ctx-empty [] (->MapContext (atom {})))
 
@@ -31,6 +36,17 @@
     (if (satisfies? data/KnDatum expr)
       expr
       (recur (kn-eval-step expr ctx)))))
+
+;; TODO: line+col errors
+(defn run-with-ctx [contents ctx]
+  (let [lex (atom (lexer/tokens contents))
+        ast (parser/parse lex true)]
+    (if (:eof (:token (lexer/advance lex)))
+      (kn-eval ast ctx)
+      (throw (Exception. "Syntax error: Did not expect an expression here")))))
+
+(defn run [contents]
+  (run-with-ctx contents (ctx-empty)))
 
 (defn main-binding [ctx this [name kind]]
   (if (= kind :unevaluated)
@@ -78,13 +94,13 @@
 (kn-create-fn Prompt [] [this ctx]
               (data/->KnString (string/trim-newline (or (read-line) ""))))
 (kn-create-fn Rand [] [this ctx]
-              (data/->KnNumber (rand-int 2147483647)))
+              (data/->KnNumber (Math/abs (.nextInt (ThreadLocalRandom/current)))))
 
 ;; Unary words
 (kn-create-fn Nop [[expr :unchanged]] [this ctx] expr)
 (kn-create-fn Block [[expr :unevaluated]] [this ctx] (data/->KnBlock expr))
-(kn-create-fn Eval [[expr :string]] [this ctx] (throw (.Exception "TODO")))
-(kn-create-fn Call [[block :block]] [this ctx] (kn-eval (.expr block) ctx))
+(kn-create-fn Eval [[expr :string]] [this ctx] (run-with-ctx (.inner expr) ctx))
+(kn-create-fn Call [[block :block]] [this ctx] (kn-eval (.inner block) ctx))
 (kn-create-fn Shell [[cmd :string]] [this ctx]
               (let [cmd (.inner cmd)
                     out (sh "sh" "-c" cmd)
@@ -95,11 +111,13 @@
                   (do
                     (ctx-put ctx "sh_stdout" (data/->KnString (:out out)))
                     (data/->KnNumber code)))))
-(kn-create-fn Quit [[code :number]] [this ctx] (System/exit code))
+(kn-create-fn Quit [[code :number]] [this ctx] (System/exit (.inner code)))
 (kn-create-fn Not [[bool :boolean]] [this ctx] (data/->KnBoolean (not (.inner bool))))
 (kn-create-fn Length [[string :string]] [this ctx]
-              (data/->KnNumber (count (.inner string))))
-(kn-create-fn Dump [[expr :unchanged]] [this ctx] (data/dump expr))
+              (data/->KnNumber (count (.getBytes (.inner string) "UTF-8"))))
+(kn-create-fn Dump [[expr :unchanged]] [this ctx]
+              (do (println (data/dump expr))
+                  expr))
 (kn-create-fn Output [[string :string]] [this ctx]
               (let [inner (.inner string)]
                 (if (.endsWith inner "\\")
@@ -110,9 +128,11 @@
                 (data/->KnNull)))
 (kn-create-fn Ascii [[arg :unchanged]] [this ctx]
               (condp instance? arg
-                KnNumber (data/->KnString (str (char (.inner arg))))
+                KnNumber (data/->KnString (Character/toString (.inner arg)))
                 KnString (data/->KnNumber
-                          (int (or (first (.inner arg)) 0)))
+                          (try
+                            (long (.codePointAt (.inner arg) 0))
+                            (catch Exception _ 0)))
                 (throw (IllegalArgumentException.
                         (str "Expected a string or a number, found a `"
                              (type arg) "`.")))))
@@ -123,8 +143,17 @@
 (kn-create-fn Use [[string :string]] [this ctx]
               (kn-eval (ast/->Eval
                         (data/->KnString
-                         (slurp (.string string))))
+                         (slurp (.inner string))))
                        ctx))
+(kn-create-fn GenSym [[string :string]] [this ctx]
+              (loop [n 1000]
+                (if (= n 0)
+                  (throw (Exception. "ran out of allowed steps (1000) in XGENSYM"))
+                  (let [num (.nextLong (ThreadLocalRandom/current) 100000 1000000)
+                        name (str (.inner string) num)]
+                    (if (ctx-contains ctx name)
+                      (recur (dec n))
+                      (data/->KnString name))))))
 
 (kn-create-fn Add [[e1 :unchanged] [e2 :coerced]] [this ctx]
               (condp instance? e1
@@ -133,8 +162,9 @@
                 (throw (IllegalArgumentException.
                         (str "Expected a string or a number, found a `"
                         (type e1) "`.")))))
-(kn-create-fn Sub [[e1 :number] [e2 :number]] [this ctx]
-              (data/->KnNumber (- (.inner e1) (.inner e2))))
+(kn-create-fn Sub [[e1 :unchanged] [e2 :number]] [this ctx]
+              (do (assert (instance? KnNumber e1) (str "Expected a number, found a `" (type e1) "`."))
+                  (data/->KnNumber (- (.inner e1) (.inner e2)))))
 (kn-create-fn Mul [[e1 :unchanged] [e2 :number]] [this ctx]
               (condp instance? e1
                 KnNumber (data/->KnNumber (* (.inner e1) (.inner e2)))
@@ -142,16 +172,19 @@
                 (throw (IllegalArgumentException.
                         (str "Expected a string or a number, found a `"
                              (type e1) "`.")))))
-(kn-create-fn Div [[e1 :number] [e2 :number]] [this ctx]
-              (data/->KnNumber (quot (.inner e1) (.inner e2))))
-(kn-create-fn Rem [[e1 :number] [e2 :number]] [this ctx]
-              (data/->KnNumber (rem (.inner e1) (.inner e2))))
-(kn-create-fn Pow [[e1 :number] [e2 :number]] [this ctx]
-              (data/->KnNumber (int (Math/pow (.inner e1) (.inner e2)))))
+(kn-create-fn Div [[e1 :unchanged] [e2 :number]] [this ctx]
+              (do (assert (instance? KnNumber e1) (str "Expected a number, found a `" (type e1) "`."))
+                  (data/->KnNumber (quot (.inner e1) (.inner e2)))))
+(kn-create-fn Rem [[e1 :unchanged] [e2 :number]] [this ctx]
+              (do (assert (instance? KnNumber e1) (str "Expected a number, found a `" (type e1) "`."))
+                  (data/->KnNumber (rem (.inner e1) (.inner e2)))))
+(kn-create-fn Pow [[e1 :unchanged] [e2 :number]] [this ctx]
+              (do (assert (instance? KnNumber e1) (str "Expected a number, found a `" (type e1) "`."))
+                  (data/->KnNumber (int (Math/pow (.inner e1) (.inner e2))))))
 (kn-create-fn Lt [[e1 :unchanged] [e2 :coerced]] [this ctx]
               (condp instance? e1
                 KnNumber (data/->KnBoolean (< (.inner e1) (.inner e2)))
-                KnString (data/->KnBoolean (= -1 (compare (.inner e1) (.inner e2))))
+                KnString (data/->KnBoolean (< (compare (.inner e1) (.inner e2)) 0))
                 KnBoolean (data/->KnBoolean (and (not (.inner e1)) (.inner e2)))
                 (throw (IllegalArgumentException.
                         (str "Expected a string, number, or boolean, found a `"
@@ -159,7 +192,7 @@
 (kn-create-fn Gt [[e1 :unchanged] [e2 :coerced]] [this ctx]
               (kn-eval (ast/->Lt e2 e1) ctx))
 (kn-create-fn Eq [[e1 :unchanged] [e2 :unchanged]] [this ctx]
-              (data/->KnBoolean (= e1 e2)))
+              (data/->KnBoolean (and (= (type e1) (type e2)) (data/kn-eq e1 e2))))
 (kn-create-fn And [[e1 :unchanged] [e2 :unevaluated]] [this ctx]
               (if (.inner (data/to-boolean e1))
                 (kn-eval e2 ctx) e1))
@@ -172,7 +205,7 @@
                     (ctx-put ctx (.inner ident) expr)
                     (ctx-put ctx (.inner (data/to-string
                                           (kn-eval ident ctx))) expr))
-                  (data/->KnNull)))
+                  expr))
 (kn-create-fn While [[test :unevaluated] [expr :unevaluated]] [this ctx]
               (do (while (.inner (data/to-boolean (kn-eval test ctx)))
                     (kn-eval expr ctx))

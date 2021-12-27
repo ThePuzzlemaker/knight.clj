@@ -8,4 +8,5 @@
   :main ^:skip-aot knight.core
   :target-path "target/%s"
   :profiles {:uberjar {:aot :all
-                       :jvm-opts ["-Dclojure.compiler.direct-linking=true"]}})
+                       :jvm-opts ["-Dclojure.compiler.direct-linking=true"
+                                  "-Dclojure.compiler.elide-meta=[:doc :file :line :added]"]}})

@@ -28,6 +28,7 @@
 (deftype Value [string] Expr)
 (deftype UnaryMinus [number] Expr)
 (deftype Use [string] Expr)
+(deftype GenSym [string] Expr)
 
 (deftype Add [e1, e2] Expr)
 (deftype Sub [e1, e2] Expr)
