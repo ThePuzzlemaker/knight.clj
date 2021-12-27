@@ -99,8 +99,9 @@
 ;; Unary words
 (kn-create-fn Nop [[expr :unchanged]] [this ctx] expr)
 (kn-create-fn Block [[expr :unevaluated]] [this ctx] (data/->KnBlock expr))
-(kn-create-fn Eval [[expr :string]] [this ctx] (run-with-ctx (.inner expr) ctx))
-(kn-create-fn Call [[block :block]] [this ctx] (kn-eval (.inner block) ctx))
+(kn-create-fn Eval [[expr :string]] [this ctx]
+              (run-with-ctx (.inner expr) ctx))
+(kn-create-fn Call [[block :block]] [this ctx] (.inner block))
 (kn-create-fn Shell [[cmd :string]] [this ctx]
               (let [cmd (.inner cmd)
                     out (sh "sh" "-c" cmd)
@@ -137,14 +138,13 @@
                         (str "Expected a string or a number, found a `"
                              (type arg) "`.")))))
 (kn-create-fn Value [[string :string]] [this ctx]
-              (kn-eval (data/->KnIdent (.inner string)) ctx))
+              (data/->KnIdent (.inner string)))
 (kn-create-fn UnaryMinus [[number :number]] [this ctx]
               (data/->KnNumber (- (.inner number))))
 (kn-create-fn Use [[string :string]] [this ctx]
-              (kn-eval (ast/->Eval
-                        (data/->KnString
-                         (slurp (.inner string))))
-                       ctx))
+              (ast/->Eval
+               (data/->KnString
+                (slurp (.inner string)))))
 (kn-create-fn GenSym [[string :string]] [this ctx]
               (loop [n 1000]
                 (if (= n 0)
@@ -190,15 +190,15 @@
                         (str "Expected a string, number, or boolean, found a `"
                              (type e1) "`.")))))
 (kn-create-fn Gt [[e1 :unchanged] [e2 :coerced]] [this ctx]
-              (kn-eval (ast/->Lt e2 e1) ctx))
+              (ast/->Lt e2 e1))
 (kn-create-fn Eq [[e1 :unchanged] [e2 :unchanged]] [this ctx]
               (data/->KnBoolean (and (= (type e1) (type e2)) (data/kn-eq e1 e2))))
 (kn-create-fn And [[e1 :unchanged] [e2 :unevaluated]] [this ctx]
               (if (.inner (data/to-boolean e1))
-                (kn-eval e2 ctx) e1))
+                e2 e1))
 (kn-create-fn Or [[e1 :unchanged] [e2 :unevaluated]] [this ctx]
               (if (.inner (data/to-boolean e1))
-                e1 (kn-eval e2 ctx)))
+                e1 e2))
 (kn-create-fn Semi [[e1 :unchanged] [e2 :unchanged]] [this ctx] e2)
 (kn-create-fn Assign [[ident :unevaluated] [expr :unchanged]] [this ctx]
               (do (if (instance? KnIdent ident)
@@ -212,7 +212,7 @@
                   (data/->KnNull)))
 
 (kn-create-fn If [[test :boolean] [iftrue :unevaluated] [iffalse :unevaluated]] [this ctx]
-              (kn-eval (if (.inner test) iftrue iffalse) ctx))
+              (if (.inner test) iftrue iffalse))
 (kn-create-fn Get [[string :string] [start :number] [length :number]] [this ctx]
               (data/->KnString (subs (.inner string)
                                      (.inner start)
@@ -237,7 +237,7 @@
   KnString (kn-eval-step [this, _] this)
   KnIdent (kn-eval-step [this, ctx]
             (if-let [expr (ctx-get ctx (.inner this))]
-              (kn-eval expr ctx)
+              expr
               (throw (IllegalArgumentException.
                       (str "Variable not found: `"
                            (.inner this) "`."))))))

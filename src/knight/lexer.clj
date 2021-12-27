@@ -42,7 +42,8 @@
       {:string s :token {:ident wip}}
       (let [ch (first s)]
         (if (or
-             (Character/isLetterOrDigit ch)
+             (Character/isDigit ch)
+             (Character/isLowerCase ch)
              (= ch \_))
           (recur (subs s 1) (str wip ch))
           {:string s :token {:ident wip}})))))

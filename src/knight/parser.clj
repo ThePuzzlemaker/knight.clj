@@ -48,4 +48,5 @@
         (= \S (:word tok)) (ast/->Substitute (parse lex false) (parse lex false) (parse lex false) (parse lex false))
         (= \V (:word tok)) (ast/->Value (parse lex false))
         (= \~ (:word tok)) (ast/->UnaryMinus (parse lex false))
-        (= \U (:word tok)) (ast/->Use (parse lex false)))))
+        (= \U (:word tok)) (ast/->Use (parse lex false))
+        :else (throw (Exception. "Syntax error: invalid expression")))))
